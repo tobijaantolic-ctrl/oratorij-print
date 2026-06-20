@@ -1,0 +1,11 @@
+.streamlit/secrets.toml
+.env
+service-account*.json
+credentials*.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+*.egg-info/
+.pytest_cache/
