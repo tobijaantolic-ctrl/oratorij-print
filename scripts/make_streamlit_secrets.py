@@ -18,6 +18,12 @@ def main() -> None:
     parser.add_argument("--sheet-id", required=True)
     parser.add_argument("--admin-password", required=True)
     parser.add_argument(
+        "--oauth-client-id",
+        help="OAuth client_id (run scripts/get_refresh_token.py first).",
+    )
+    parser.add_argument("--oauth-client-secret")
+    parser.add_argument("--oauth-refresh-token")
+    parser.add_argument(
         "--out",
         type=Path,
         default=Path(".streamlit/secrets.toml"),
@@ -33,9 +39,20 @@ def main() -> None:
         f"drive_folder_id = {toml_string(args.drive_folder_id)}",
         f"sheet_id = {toml_string(args.sheet_id)}",
         "",
-        "[gcp_service_account]",
     ]
 
+    if args.oauth_client_id or args.oauth_client_secret or args.oauth_refresh_token:
+        if not (args.oauth_client_id and args.oauth_client_secret and args.oauth_refresh_token):
+            parser.error("Provide all three: --oauth-client-id, --oauth-client-secret, --oauth-refresh-token")
+        lines += [
+            "[google_oauth]",
+            f"client_id = {toml_string(args.oauth_client_id)}",
+            f"client_secret = {toml_string(args.oauth_client_secret)}",
+            f"refresh_token = {toml_string(args.oauth_refresh_token)}",
+            "",
+        ]
+
+    lines.append("[gcp_service_account]")
     for key, value in data.items():
         if isinstance(value, str):
             lines.append(f"{key} = {toml_string(value)}")

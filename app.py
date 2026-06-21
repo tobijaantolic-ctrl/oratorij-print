@@ -27,6 +27,7 @@ import streamlit as st
 
 # Google API
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import gspread
@@ -104,9 +105,12 @@ st.markdown(
 )
 
 
-SCOPES = [
-    "https://www.googleapis.com/auth/drive",
+SHEETS_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.readonly",  # gspread needs minimal drive
+]
+DRIVE_SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
 SHEET_HEADERS = [
@@ -134,13 +138,30 @@ APP_TIMEZONE = ZoneInfo("Europe/Ljubljana")
 
 @st.cache_resource(show_spinner=False)
 def get_clients() -> tuple[Any, Any]:
-    """Vrne (drive_service, gspread_worksheet). Cache-an za session."""
-    sa_info = dict(st.secrets["gcp_service_account"])
-    creds = service_account.Credentials.from_service_account_info(
-        sa_info, scopes=SCOPES
+    """Vrne (drive_service, gspread_worksheet).
+
+    Drive client uporablja OAuth user credentials (refresh_token) — uploadi gredo v
+    uporabnikov Drive z njegovo storage quoto. Sheets client ostane service-account
+    (Sheet ima service-account email že shared kot Editor).
+    """
+    # 1) Drive — OAuth user
+    oauth = st.secrets["google_oauth"]
+    user_creds = UserCredentials(
+        None,
+        refresh_token=oauth["refresh_token"],
+        client_id=oauth["client_id"],
+        client_secret=oauth["client_secret"],
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=DRIVE_SCOPES,
     )
-    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    gc = gspread.authorize(creds)
+    drive = build("drive", "v3", credentials=user_creds, cache_discovery=False)
+
+    # 2) Sheets — service account
+    sa_info = dict(st.secrets["gcp_service_account"])
+    sa_creds = service_account.Credentials.from_service_account_info(
+        sa_info, scopes=SHEETS_SCOPES
+    )
+    gc = gspread.authorize(sa_creds)
     sh = gc.open_by_key(st.secrets["sheet_id"])
     ws = sh.sheet1
 
