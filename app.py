@@ -195,20 +195,45 @@ def upload_file_to_drive(
     filename: str,
     mimetype: str | None,
 ) -> tuple[str, str]:
-    """Naloži fajl v Drive folder. Vrne (file_id, webViewLink)."""
+    """Naloži fajl v Drive folder. Vrne (file_id, webViewLink).
+
+    Uporablja resumable upload (5 MB chunki + retry), ker non-resumable
+    poči pri večjih fajlih (broken pipe).
+    """
     safe_name = _sanitize_filename(filename)
     body = {"name": safe_name, "parents": [folder_id]}
+
+    use_resumable = len(raw_bytes) > 1 * 1024 * 1024  # >1 MB → resumable
     media = MediaIoBaseUpload(
         io.BytesIO(raw_bytes),
         mimetype=mimetype or "application/octet-stream",
-        resumable=False,
+        chunksize=5 * 1024 * 1024,
+        resumable=use_resumable,
     )
-    f = (
-        drive.files()
-        .create(body=body, media_body=media, fields="id, webViewLink", supportsAllDrives=True)
-        .execute()
+
+    request = drive.files().create(
+        body=body,
+        media_body=media,
+        fields="id, webViewLink",
+        supportsAllDrives=True,
     )
-    return f["id"], f.get("webViewLink", "")
+
+    if not use_resumable:
+        f = request.execute()
+        return f["id"], f.get("webViewLink", "")
+
+    # Resumable: chunk by chunk with retry per chunk
+    response = None
+    last_err: Exception | None = None
+    while response is None:
+        try:
+            _status, response = request.next_chunk(num_retries=3)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            # next_chunk handles transient retries internally; bail on persistent
+            raise
+
+    return response["id"], response.get("webViewLink", "")
 
 
 def download_file_from_drive(drive, file_id: str) -> bytes:
