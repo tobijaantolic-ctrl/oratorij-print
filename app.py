@@ -543,48 +543,40 @@ def render_admin_page() -> None:
 
     st.markdown(f"**{len(filt)} oddaj**")
 
-    # ── EXPORT na vrh (ZIP z vsemi fajli; v ZIP-u so fajli preimenovani v
-    #    "Nx__VELIKOST__STRANI__original.ext", da printer vidi vse iz imena)
+    # ── EXPORT na vrh: ZIP z vsemi fajli, preimenovanimi v
+    #    "<kopije>x<velikost> <strani>.ext" — printer vidi vse iz imena.
     st.markdown("### ⬇️ Export za printerja")
-
-    # CSV (vključen v ZIP) — kolona velikost dodana
-    printer_csv = (
-        filt[["filename", "ime", "namen", "namen_podrobno", "kopije", "strani", "velikost", "opombe"]]
-        .rename(
-            columns={
-                "filename": "Fajl",
-                "ime": "Oddal",
-                "namen": "Namen",
-                "namen_podrobno": "Podrobno",
-                "kopije": "Kopij",
-                "strani": "Strani",
-                "velikost": "Velikost",
-                "opombe": "Opombe",
-            }
-        )
-        .to_csv(index=False)
-        .encode("utf-8-sig")
-    )
 
     if st.button(f"📦 Pripravi ZIP ({len(filt)} datotek)", type="primary", use_container_width=True):
         with st.spinner(f"Prenašam {len(filt)} fajlov iz Drive…"):
             zip_buf = io.BytesIO()
             problems = []
+            used_names: dict[str, int] = {}
             with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("00_print-list.csv", printer_csv.decode("utf-8-sig"))
                 for _, row in filt.iterrows():
                     fid = row.get("drive_file_id")
                     if not fid:
                         continue
                     try:
                         data = download_file_from_drive(drive, fid)
-                        # filename v ZIP-u: Nx__VELIKOST__STRANI__originalfilename
-                        # → printer vidi vse iz imena
+                        # filename: "<kopije>x<velikost> <strani>.ext"
+                        # primer: "7xA4 enostransko.pdf"
                         kopije_n = int(row.get("kopije") or 1)
-                        velikost_s = _sanitize_filename(str(row.get("velikost") or "A4"))
-                        strani_s = _sanitize_filename(str(row.get("strani") or "Enostransko"))
-                        original = _sanitize_filename(str(row["filename"]))
-                        zname = f"{kopije_n}x__{velikost_s}__{strani_s}__{original}"
+                        velikost_s = str(row.get("velikost") or "A4")
+                        strani_s = str(row.get("strani") or "Enostransko").lower()
+                        original = str(row["filename"])
+                        # ekstenzija iz originala
+                        ext = ""
+                        if "." in original:
+                            ext = "." + original.rsplit(".", 1)[1].lower()
+                        base = f"{kopije_n}x{velikost_s} {strani_s}"
+                        zname = base + ext
+                        # dedup: če več fajlov istih nastavitev, dodaj (n)
+                        if zname in used_names:
+                            used_names[zname] += 1
+                            zname = f"{base} ({used_names[zname]}){ext}"
+                        else:
+                            used_names[zname] = 1
                         zf.writestr(zname, data)
                     except Exception as e:
                         problems.append(f"{row.get('filename')}: {e}")
