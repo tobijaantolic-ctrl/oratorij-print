@@ -126,6 +126,7 @@ SHEET_HEADERS = [
     "drive_file_id",
     "drive_link",
     "natisnjeno",
+    "velikost",  # dodano kasneje — na koncu, da stare vrstice ostanejo veljavne
 ]
 
 APP_TIMEZONE = ZoneInfo("Europe/Ljubljana")
@@ -288,7 +289,7 @@ def render_upload_page() -> None:
 
     # ── Print nastavitve
     st.markdown("### 🖨️ Kako naj se sprinta")
-    c1, c2 = st.columns([1, 2])
+    c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
         kopije = st.number_input(
             "Kopije",
@@ -305,6 +306,14 @@ def render_upload_page() -> None:
             index=0,
             horizontal=True,
             key="strani",
+        )
+    with c3:
+        velikost = st.radio(
+            "Velikost",
+            ["A4", "A3"],
+            index=0,
+            horizontal=True,
+            key="velikost",
         )
 
     st.markdown("### 👤 Tvoji podatki")
@@ -353,7 +362,7 @@ def render_upload_page() -> None:
     )
 
     st.markdown("")
-    submit = st.button("📤 Pošlji v pisarno", type="primary", use_container_width=True)
+    submit = st.button("📤 Pošlji OT", type="primary", use_container_width=True)
 
     if submit:
         # Validacija
@@ -367,9 +376,9 @@ def render_upload_page() -> None:
             st.error("Izpolni polje za namen.")
             return
 
-        # Pripravi metadata za vsak fajl — ena globalna kopije + strani za vse
+        # Pripravi metadata za vsak fajl — globalna kopije + strani + velikost za vse
         files_payload = [
-            {"file": f, "copies": int(kopije), "sides": strani}
+            {"file": f, "copies": int(kopije), "sides": strani, "size": velikost}
             for f in uploaded
         ]
 
@@ -412,6 +421,7 @@ def render_upload_page() -> None:
                             file_id,
                             link,
                             "",  # natisnjeno checkbox — prazno na startu
+                            item["size"],
                         ]
                     )
                 except Exception as e:
@@ -531,9 +541,83 @@ def render_admin_page() -> None:
             | filt["filename"].str.lower().str.contains(q, na=False)
         ]
 
-    st.markdown(f"### {len(filt)} vrstic")
+    st.markdown(f"**{len(filt)} oddaj**")
+
+    # ── EXPORT na vrh (ZIP z vsemi fajli; v ZIP-u so fajli preimenovani v
+    #    "Nx__VELIKOST__STRANI__original.ext", da printer vidi vse iz imena)
+    st.markdown("### ⬇️ Export za printerja")
+
+    # CSV (vključen v ZIP) — kolona velikost dodana
+    printer_csv = (
+        filt[["filename", "ime", "namen", "namen_podrobno", "kopije", "strani", "velikost", "opombe"]]
+        .rename(
+            columns={
+                "filename": "Fajl",
+                "ime": "Oddal",
+                "namen": "Namen",
+                "namen_podrobno": "Podrobno",
+                "kopije": "Kopij",
+                "strani": "Strani",
+                "velikost": "Velikost",
+                "opombe": "Opombe",
+            }
+        )
+        .to_csv(index=False)
+        .encode("utf-8-sig")
+    )
+
+    if st.button(f"📦 Pripravi ZIP ({len(filt)} datotek)", type="primary", use_container_width=True):
+        with st.spinner(f"Prenašam {len(filt)} fajlov iz Drive…"):
+            zip_buf = io.BytesIO()
+            problems = []
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("00_print-list.csv", printer_csv.decode("utf-8-sig"))
+                for _, row in filt.iterrows():
+                    fid = row.get("drive_file_id")
+                    if not fid:
+                        continue
+                    try:
+                        data = download_file_from_drive(drive, fid)
+                        # filename v ZIP-u: Nx__VELIKOST__STRANI__originalfilename
+                        # → printer vidi vse iz imena
+                        kopije_n = int(row.get("kopije") or 1)
+                        velikost_s = _sanitize_filename(str(row.get("velikost") or "A4"))
+                        strani_s = _sanitize_filename(str(row.get("strani") or "Enostransko"))
+                        original = _sanitize_filename(str(row["filename"]))
+                        zname = f"{kopije_n}x__{velikost_s}__{strani_s}__{original}"
+                        zf.writestr(zname, data)
+                    except Exception as e:
+                        problems.append(f"{row.get('filename')}: {e}")
+            zip_buf.seek(0)
+            st.session_state["zip_data"] = zip_buf.getvalue()
+            st.session_state["zip_problems"] = problems
+
+    if "zip_data" in st.session_state:
+        st.download_button(
+            "⬇️ Prenesi ZIP",
+            st.session_state["zip_data"],
+            file_name=f"print-{date.today().isoformat()}.zip",
+            mime="application/zip",
+            type="primary",
+            use_container_width=True,
+        )
+        if st.session_state.get("zip_problems"):
+            st.warning("Pri nekaterih fajlih je bilo problema:")
+            for p in st.session_state["zip_problems"]:
+                st.text(f"• {p}")
+
+    st.markdown("---")
+
+    # Skupna statistika za printerja
+    if len(filt):
+        total_files = len(filt)
+        total_pages = filt["kopije"].sum()
+        c1, c2 = st.columns(2)
+        c1.metric("Različnih fajlov", total_files)
+        c2.metric("Skupaj kopij", int(total_pages))
 
     # Glavna tabela
+    st.markdown("### 📋 Vse oddaje")
     display_cols = [
         "timestamp",
         "ime",
@@ -542,6 +626,7 @@ def render_admin_page() -> None:
         "filename",
         "kopije",
         "strani",
+        "velikost",
         "opombe",
         "drive_link",
     ]
@@ -553,91 +638,9 @@ def render_admin_page() -> None:
             "timestamp": st.column_config.DatetimeColumn("Čas", format="DD.MM HH:mm"),
             "drive_link": st.column_config.LinkColumn("Drive", display_text="odpri"),
             "kopije": st.column_config.NumberColumn("Kopij", width="small"),
+            "velikost": st.column_config.TextColumn("Velikost", width="small"),
         },
     )
-
-    # Skupna statistika za printerja
-    st.markdown("### 🖨️ Povzetek za printerja")
-    if len(filt):
-        total_files = len(filt)
-        total_pages = filt["kopije"].sum()
-        c1, c2 = st.columns(2)
-        c1.metric("Različnih fajlov", total_files)
-        c2.metric("Skupaj kopij", int(total_pages))
-
-    # ── Export
-    st.markdown("### ⬇️ Export")
-    e1, e2 = st.columns(2)
-
-    with e1:
-        # CSV samo z metadata (za printerja)
-        printer_csv = (
-            filt[["filename", "ime", "namen", "namen_podrobno", "kopije", "strani", "opombe"]]
-            .rename(
-                columns={
-                    "filename": "Fajl",
-                    "ime": "Oddal",
-                    "namen": "Namen",
-                    "namen_podrobno": "Podrobno",
-                    "kopije": "Kopij",
-                    "strani": "Strani",
-                    "opombe": "Opombe",
-                }
-            )
-            .to_csv(index=False)
-            .encode("utf-8-sig")
-        )
-        st.download_button(
-            "📄 Prenesi CSV za printerja",
-            printer_csv,
-            file_name=f"print-list-{date.today().isoformat()}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with e2:
-        if st.button("📦 Pripravi ZIP fajlov + CSV", use_container_width=True):
-            with st.spinner(f"Prenašam {len(filt)} fajlov iz Drive…"):
-                zip_buf = io.BytesIO()
-                problems = []
-                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    # CSV vključen v ZIP
-                    zf.writestr(
-                        "00_print-list.csv",
-                        printer_csv.decode("utf-8-sig"),
-                    )
-                    for _, row in filt.iterrows():
-                        fid = row.get("drive_file_id")
-                        if not fid:
-                            continue
-                        try:
-                            data = download_file_from_drive(drive, fid)
-                            # filename v ZIP-u: kopije__ime__originalfilename
-                            zname = (
-                                f"{int(row['kopije'])}x__"
-                                f"{_sanitize_filename(str(row['namen']))}__"
-                                f"{_sanitize_filename(str(row['ime']))}__"
-                                f"{_sanitize_filename(str(row['filename']))}"
-                            )
-                            zf.writestr(zname, data)
-                        except Exception as e:
-                            problems.append(f"{row.get('filename')}: {e}")
-                zip_buf.seek(0)
-                st.session_state["zip_data"] = zip_buf.getvalue()
-                st.session_state["zip_problems"] = problems
-
-        if "zip_data" in st.session_state:
-            st.download_button(
-                "⬇️ Prenesi ZIP",
-                st.session_state["zip_data"],
-                file_name=f"print-{date.today().isoformat()}.zip",
-                mime="application/zip",
-                use_container_width=True,
-            )
-            if st.session_state.get("zip_problems"):
-                st.warning("Pri nekaterih fajlih je bilo problema:")
-                for p in st.session_state["zip_problems"]:
-                    st.text(f"• {p}")
 
 
 # ────────────────────────────────────────────────────────────────────────────
