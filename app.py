@@ -271,56 +271,33 @@ def render_upload_page() -> None:
 
     st.title("🖨️ Naloži fajle za print")
     st.caption(
-        "Naloži, kar bi rad imel sprintano. Vsak fajl posebej označi koliko kopij in enostransko/dvostransko."
+        "Naloži, kar bi rad imel sprintano. Tukaj nastaviš kako naj se sprinta."
     )
 
-    # Fajli — izven forme, da takoj reagira
-    uploaded = st.file_uploader(
-        "Tvoji fajli (PDF, slike, Word…)",
-        accept_multiple_files=True,
-        type=None,  # sprejmi vse
-        label_visibility="visible",
-        key="uploader",
-    )
+    # ── Print nastavitve PRED uploaderjem
+    # (ena vrednost za vse naložene fajle — če rabiš različno za vsak fajl,
+    # naredi več oddaj). Vidno od začetka, da lahko izpolniš med tem ko
+    # se nalagajo veliki fajli.
+    st.markdown("### 🖨️ Kako naj se sprinta")
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        kopije = st.number_input(
+            "Kopije",
+            min_value=1,
+            max_value=500,
+            value=1,
+            step=1,
+            key="kopije",
+        )
+    with c2:
+        strani = st.radio(
+            "Strani",
+            ["Enostransko", "Dvostransko"],
+            index=0,
+            horizontal=True,
+            key="strani",
+        )
 
-    if uploaded:
-        st.markdown("### 📄 Nastavitve za vsak fajl")
-        for i, f in enumerate(uploaded):
-            escaped_name = html.escape(f.name)
-            size_kb = f.size / 1024 if hasattr(f, "size") and f.size else 0
-            size_str = (
-                f"{size_kb/1024:.1f} MB" if size_kb >= 1024 else f"{size_kb:.0f} KB"
-            )
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div class="file-card">
-                      <div class="name">{escaped_name}</div>
-                      <div class="size">{size_str}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    st.number_input(
-                        "Kopije",
-                        min_value=1,
-                        max_value=500,
-                        value=1,
-                        step=1,
-                        key=f"copies_{i}",
-                    )
-                with c2:
-                    st.radio(
-                        "Strani",
-                        ["Enostransko", "Dvostransko"],
-                        index=0,
-                        horizontal=True,
-                        key=f"sides_{i}",
-                    )
-
-    st.markdown("---")
     st.markdown("### 👤 Tvoji podatki")
 
     ime = st.text_input("Tvoje ime in priimek *", key="ime")
@@ -336,13 +313,20 @@ def render_upload_page() -> None:
     if namen == "Kateheza":
         namen_detail = st.text_input(
             "Katera kateheza? *",
-            placeholder="npr. 1. razred, srednješolska, ipd.",
+            placeholder="npr. 1.1",
             key="namen_kateheza",
         )
     elif namen == "Velika igra":
         namen_detail = st.selectbox(
             "Kateri dan velike igre? *",
-            ["Ponedeljek", "Torek", "Sreda", "Četrtek", "Petek"],
+            [
+                "Ponedeljek",
+                "Torek",
+                "Sreda",
+                "Četrtek",
+                "Petek",
+                "Nočni oratorij",
+            ],
             key="namen_dan",
         )
     elif namen == "Drugo":
@@ -359,6 +343,19 @@ def render_upload_page() -> None:
         height=80,
     )
 
+    st.markdown("### 📎 Tvoji fajli")
+    st.caption("Naloži kar bi rad imel sprintano (PDF, slike, Word…). Velike fajle (30+ MB) nalaganje lahko traja.")
+    uploaded = st.file_uploader(
+        "Klikni 'Browse files' ali povleci sem",
+        accept_multiple_files=True,
+        type=None,
+        label_visibility="collapsed",
+        key="uploader",
+    )
+
+    if uploaded:
+        st.success(f"✅ Pripravljenih za pošiljanje: **{len(uploaded)}** fajlov")
+
     st.markdown("")
     submit = st.button("📤 Pošlji v pisarno", type="primary", use_container_width=True)
 
@@ -374,16 +371,11 @@ def render_upload_page() -> None:
             st.error("Izpolni polje za namen.")
             return
 
-        # Pripravi metadata za vsak fajl
-        files_payload = []
-        for i, f in enumerate(uploaded):
-            files_payload.append(
-                {
-                    "file": f,
-                    "copies": st.session_state.get(f"copies_{i}", 1),
-                    "sides": st.session_state.get(f"sides_{i}", "Enostransko"),
-                }
-            )
+        # Pripravi metadata za vsak fajl — ena globalna kopije + strani za vse
+        files_payload = [
+            {"file": f, "copies": int(kopije), "sides": strani}
+            for f in uploaded
+        ]
 
         # Pošlji
         with st.spinner("Pošiljam… (lahko traja par sekund)"):
