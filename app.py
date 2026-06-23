@@ -491,9 +491,6 @@ def _fetch_dataframe(ws) -> pd.DataFrame:
 
 
 def render_admin_page() -> None:
-    if not _check_admin_password():
-        return
-
     st.title("📋 Admin — oddaje za print")
 
     try:
