@@ -509,6 +509,9 @@ def render_admin_page() -> None:
         st.info("Še ni nobene oddaje.")
         return
 
+    # Bool stolpec za "natisnjeno" — UI checkbox dela z bool
+    df["_done"] = df["natisnjeno"].astype(str).str.strip().str.lower().isin(["x", "true", "1", "✓", "yes", "ja"])
+
     # ── Filtri
     st.markdown("### Filtri")
     c1, c2, c3 = st.columns(3)
@@ -525,7 +528,15 @@ def render_admin_page() -> None:
     with c3:
         ime_search = st.text_input("Iskanje (ime / podrobno)")
 
+    show_done = st.toggle(
+        "Pokaži tudi že natisnjene",
+        value=False,
+        help="Privzeto skrijemo natisnjene — vidiš samo to, kar je še treba sprintati.",
+    )
+
     filt = df.copy()
+    if not show_done:
+        filt = filt[~filt["_done"]]
     if date_filter:
         filt = filt[filt["timestamp"].dt.date.isin(date_filter)]
     if namen_filter:
@@ -605,9 +616,11 @@ def render_admin_page() -> None:
         c1.metric("Različnih fajlov", total_files)
         c2.metric("Skupaj kopij", int(total_pages))
 
-    # Glavna tabela
-    st.markdown("### 📋 Vse oddaje")
-    display_cols = [
+    # Glavna tabela z checkbox stolpcem za "natisnjeno"
+    st.markdown("### 📋 Oddaje")
+    st.caption("Obkljukaj '✓' ko sprintaš → izgine iz seznama (in iz ZIP exporta).")
+    editor_cols = [
+        "_done",
         "timestamp",
         "ime",
         "namen",
@@ -619,17 +632,47 @@ def render_admin_page() -> None:
         "opombe",
         "drive_link",
     ]
-    st.dataframe(
-        filt[display_cols].sort_values("timestamp", ascending=False),
+    table_df = filt[editor_cols].sort_values("timestamp", ascending=False)
+    edited = st.data_editor(
+        table_df,
         use_container_width=True,
         hide_index=True,
+        disabled=[c for c in editor_cols if c != "_done"],
         column_config={
+            "_done": st.column_config.CheckboxColumn("✓", width="small", default=False),
             "timestamp": st.column_config.DatetimeColumn("Čas", format="DD.MM HH:mm"),
             "drive_link": st.column_config.LinkColumn("Drive", display_text="odpri"),
             "kopije": st.column_config.NumberColumn("Kopij", width="small"),
             "velikost": st.column_config.TextColumn("Velikost", width="small"),
         },
+        key="admin_editor",
     )
+
+    # Zaznaj spremembe in zapiši v Sheet
+    NATISNJENO_COL = SHEET_HEADERS.index("natisnjeno") + 1  # 1-indexed
+    changes = []
+    for idx in edited.index:
+        new_val = bool(edited.loc[idx, "_done"])
+        old_val = bool(table_df.loc[idx, "_done"])
+        if new_val != old_val:
+            sheet_row = int(idx) + 2  # +1 za header, +1 za 1-indexed
+            changes.append((sheet_row, "x" if new_val else ""))
+
+    if changes:
+        with st.spinner(f"Posodabljam {len(changes)} oddaj v Sheetu…"):
+            try:
+                ws.batch_update([
+                    {
+                        "range": gspread.utils.rowcol_to_a1(sr, NATISNJENO_COL),
+                        "values": [[val]],
+                    }
+                    for sr, val in changes
+                ])
+            except Exception as e:
+                st.error(f"Napaka pri zapisu v Sheet: {e}")
+            else:
+                st.cache_resource.clear()
+                st.rerun()
 
 
 # ────────────────────────────────────────────────────────────────────────────
