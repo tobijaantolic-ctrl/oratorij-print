@@ -274,10 +274,19 @@ def render_upload_page() -> None:
         "Naloži, kar bi rad imel sprintano. Tukaj nastaviš kako naj se sprinta."
     )
 
-    # ── Print nastavitve PRED uploaderjem
-    # (ena vrednost za vse naložene fajle — če rabiš različno za vsak fajl,
-    # naredi več oddaj). Vidno od začetka, da lahko izpolniš med tem ko
-    # se nalagajo veliki fajli.
+    st.markdown("### 📎 Datoteke za natisnit")
+    st.caption("PDF, slike, Word… velike datoteke (30+ MB) lahko nalaganje traja.")
+    uploaded = st.file_uploader(
+        "Klikni 'Browse files' ali povleci sem",
+        accept_multiple_files=True,
+        type=None,
+        label_visibility="collapsed",
+        key="uploader",
+    )
+    if uploaded:
+        st.success(f"✅ Pripravljenih za pošiljanje: **{len(uploaded)}** datotek")
+
+    # ── Print nastavitve
     st.markdown("### 🖨️ Kako naj se sprinta")
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -342,19 +351,6 @@ def render_upload_page() -> None:
         key="opombe",
         height=80,
     )
-
-    st.markdown("### 📎 Tvoji fajli")
-    st.caption("Naloži kar bi rad imel sprintano (PDF, slike, Word…). Velike fajle (30+ MB) nalaganje lahko traja.")
-    uploaded = st.file_uploader(
-        "Klikni 'Browse files' ali povleci sem",
-        accept_multiple_files=True,
-        type=None,
-        label_visibility="collapsed",
-        key="uploader",
-    )
-
-    if uploaded:
-        st.success(f"✅ Pripravljenih za pošiljanje: **{len(uploaded)}** fajlov")
 
     st.markdown("")
     submit = st.button("📤 Pošlji v pisarno", type="primary", use_container_width=True)
